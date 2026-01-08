@@ -138,37 +138,236 @@ weight_t local_constraint(Graph& G, node_t u, node_t v, std::string weight, rec_
     }
 }
 
-std::pair<node_t, weight_t> compute_constraint_of_v(Graph& G, node_t v, std::string weight, rec_type& local_constraint_rec, rec_type& sum_nmw_rec) {
-    weight_t constraint_of_v = 0;
-    if (G.adj[v].size() == 0) {
-        constraint_of_v = Py_NAN;
-    } else {
-        for (const auto& n : G.adj[v]) {
-            weight_t local_cons = local_constraint(G, v, n.first, weight, local_constraint_rec, sum_nmw_rec);
-            constraint_of_v += local_cons;
+static std::unordered_map<node_t, weight_t> build_degree(Graph& G, const std::string& weight) {
+    std::unordered_map<node_t, weight_t> degree;
+    degree.reserve(G.adj.size());
+    for (const auto& node_pair : G.adj) {
+        node_t node = node_pair.first;
+        weight_t sum = 0;
+        for (const auto& neighbor_pair : node_pair.second) {
+            sum += mutual_weight(G, node, neighbor_pair.first, weight);
         }
+        degree[node] = sum;
     }
-    return std::make_pair(v, constraint_of_v);
+    return degree;
 }
 
-std::pair<node_t, weight_t> directed_compute_constraint_of_v(DiGraph& G, node_t v, std::string weight, rec_type& local_constraint_rec, rec_type& sum_nmw_rec) {
-    weight_t constraint_of_v = 0;
-    if (G.adj[v].size() == 0) {
-        constraint_of_v = Py_NAN;
-    } else {
-        std::unordered_set<node_t> neighbors;
-        for (const auto& n : G.adj[v]) {
-            neighbors.insert(n.first);
+static std::unordered_map<node_t, weight_t> build_directed_degree(DiGraph& G, const std::string& weight) {
+    std::unordered_map<node_t, weight_t> degree;
+    degree.reserve(G.adj.size() + G.pred.size());
+    auto accumulate_degree = [&](node_t node) {
+        if (degree.count(node)) {
+            return;
         }
-        for (const auto& n : G.pred[v]) {
-            neighbors.insert(n.first);
+        weight_t sum = 0;
+        auto adj_it = G.adj.find(node);
+        if (adj_it != G.adj.end()) {
+            for (const auto& neighbor_pair : adj_it->second) {
+                sum += directed_mutual_weight(G, node, neighbor_pair.first, weight);
+            }
         }
-        for (const auto& n : neighbors) {
-            weight_t local_cons = directed_local_constraint(G, v, n, weight, local_constraint_rec, sum_nmw_rec);
-            constraint_of_v += local_cons;
+        auto pred_it = G.pred.find(node);
+        if (pred_it != G.pred.end()) {
+            for (const auto& neighbor_pair : pred_it->second) {
+                sum += directed_mutual_weight(G, node, neighbor_pair.first, weight);
+            }
+        }
+        degree[node] = sum;
+    };
+    for (const auto& node_pair : G.adj) {
+        accumulate_degree(node_pair.first);
+    }
+    for (const auto& node_pair : G.pred) {
+        accumulate_degree(node_pair.first);
+    }
+    return degree;
+}
+
+static weight_t compute_constraint_of_v(Graph& G, node_t v, const std::string& weight,
+                                        const std::unordered_map<node_t, weight_t>& degree) {
+    auto adj_it = G.adj.find(v);
+    if (adj_it == G.adj.end() || adj_it->second.empty()) {
+        return Py_NAN;
+    }
+    auto degree_it = degree.find(v);
+    if (degree_it == degree.end() || degree_it->second == 0) {
+        return Py_NAN;
+    }
+    weight_t degree_v = degree_it->second;
+
+    std::unordered_map<node_t, weight_t> contrib;
+    contrib.reserve(adj_it->second.size() * 2);
+
+    for (const auto& neighbor_pair : adj_it->second) {
+        contrib[neighbor_pair.first] = 0.0;
+    }
+
+    for (const auto& neighbor_pair : adj_it->second) {
+        node_t j = neighbor_pair.first;
+        if (v == j) {
+            continue;
+        }
+        weight_t w_vj = mutual_weight(G, v, j, weight);
+        contrib[j] += w_vj / degree_v;
+    }
+
+    for (const auto& neighbor_pair : adj_it->second) {
+        node_t j = neighbor_pair.first;
+        if (v == j) {
+            continue;
+        }
+        auto degree_j_it = degree.find(j);
+        if (degree_j_it == degree.end() || degree_j_it->second == 0) {
+            continue;
+        }
+        weight_t degree_j = degree_j_it->second;
+        weight_t w_vj = mutual_weight(G, v, j, weight);
+        auto adj_j_it = G.adj.find(j);
+        if (adj_j_it == G.adj.end()) {
+            continue;
+        }
+        for (const auto& j_neighbor_pair : adj_j_it->second) {
+            node_t q = j_neighbor_pair.first;
+            if (j == q) {
+                continue;
+            }
+            weight_t w_jq = mutual_weight(G, j, q, weight);
+            contrib[q] += (w_vj * w_jq) / (degree_v * degree_j);
         }
     }
-    return std::make_pair(v, constraint_of_v);
+
+    weight_t constraint_of_v = 0;
+    for (const auto& neighbor_pair : adj_it->second) {
+        node_t j = neighbor_pair.first;
+        if (v == j) {
+            continue;
+        }
+        auto contrib_it = contrib.find(j);
+        if (contrib_it != contrib.end()) {
+            constraint_of_v += contrib_it->second * contrib_it->second;
+        }
+    }
+    return constraint_of_v;
+}
+
+static weight_t directed_compute_constraint_of_v(DiGraph& G, node_t v, const std::string& weight,
+                                                 const std::unordered_map<node_t, weight_t>& degree) {
+    std::vector<node_t> neighbors;
+    std::unordered_set<node_t> neighbor_set;
+    size_t adj_size = 0;
+    size_t pred_size = 0;
+    auto adj_it = G.adj.find(v);
+    if (adj_it != G.adj.end()) {
+        adj_size = adj_it->second.size();
+    }
+    auto pred_it = G.pred.find(v);
+    if (pred_it != G.pred.end()) {
+        pred_size = pred_it->second.size();
+    }
+    neighbors.reserve(adj_size + pred_size);
+    neighbor_set.reserve(adj_size + pred_size);
+
+    if (adj_it != G.adj.end()) {
+        for (const auto& neighbor_pair : adj_it->second) {
+            if (neighbor_set.insert(neighbor_pair.first).second) {
+                neighbors.push_back(neighbor_pair.first);
+            }
+        }
+    }
+    if (pred_it != G.pred.end()) {
+        for (const auto& neighbor_pair : pred_it->second) {
+            if (neighbor_set.insert(neighbor_pair.first).second) {
+                neighbors.push_back(neighbor_pair.first);
+            }
+        }
+    }
+
+    if (neighbors.empty()) {
+        return Py_NAN;
+    }
+
+    auto degree_it = degree.find(v);
+    if (degree_it == degree.end() || degree_it->second == 0) {
+        return Py_NAN;
+    }
+    weight_t degree_v = degree_it->second;
+
+    std::unordered_map<node_t, weight_t> contrib;
+    contrib.reserve(neighbors.size() * 2);
+
+    for (node_t j : neighbors) {
+        contrib[j] = 0.0;
+    }
+
+    for (node_t j : neighbors) {
+        if (v == j) {
+            continue;
+        }
+        weight_t w_vj = directed_mutual_weight(G, v, j, weight);
+        contrib[j] += w_vj / degree_v;
+    }
+
+    for (node_t j : neighbors) {
+        if (v == j) {
+            continue;
+        }
+        auto degree_j_it = degree.find(j);
+        if (degree_j_it == degree.end() || degree_j_it->second == 0) {
+            continue;
+        }
+        weight_t degree_j = degree_j_it->second;
+        weight_t w_vj = directed_mutual_weight(G, v, j, weight);
+
+        std::unordered_set<node_t> j_neighbor_set;
+        std::vector<node_t> j_neighbors;
+        size_t j_adj_size = 0;
+        size_t j_pred_size = 0;
+        auto j_adj_it = G.adj.find(j);
+        if (j_adj_it != G.adj.end()) {
+            j_adj_size = j_adj_it->second.size();
+        }
+        auto j_pred_it = G.pred.find(j);
+        if (j_pred_it != G.pred.end()) {
+            j_pred_size = j_pred_it->second.size();
+        }
+        j_neighbors.reserve(j_adj_size + j_pred_size);
+        j_neighbor_set.reserve(j_adj_size + j_pred_size);
+
+        if (j_adj_it != G.adj.end()) {
+            for (const auto& j_neighbor_pair : j_adj_it->second) {
+                if (j_neighbor_set.insert(j_neighbor_pair.first).second) {
+                    j_neighbors.push_back(j_neighbor_pair.first);
+                }
+            }
+        }
+        if (j_pred_it != G.pred.end()) {
+            for (const auto& j_neighbor_pair : j_pred_it->second) {
+                if (j_neighbor_set.insert(j_neighbor_pair.first).second) {
+                    j_neighbors.push_back(j_neighbor_pair.first);
+                }
+            }
+        }
+
+        for (node_t q : j_neighbors) {
+            if (j == q) {
+                continue;
+            }
+            weight_t w_jq = directed_mutual_weight(G, j, q, weight);
+            contrib[q] += (w_vj * w_jq) / (degree_v * degree_j);
+        }
+    }
+
+    weight_t constraint_of_v = 0;
+    for (node_t j : neighbors) {
+        if (v == j) {
+            continue;
+        }
+        auto contrib_it = contrib.find(j);
+        if (contrib_it != contrib.end()) {
+            constraint_of_v += contrib_it->second * contrib_it->second;
+        }
+    }
+    return constraint_of_v;
 }
 
 py::object invoke_cpp_constraint(py::object G, py::object nodes, py::object weight) {
@@ -187,6 +386,7 @@ py::object invoke_cpp_constraint(py::object G, py::object nodes, py::object weig
 
     if (is_directed) {
         DiGraph& G_ = G.cast<DiGraph&>();
+        auto degree = build_directed_degree(G_, weight_key);
         for (int i = 0; i < nodes_list_len; i++) {
             py::object v = nodes_list[i];
             node_ids[i] = G_.node_to_id[v].cast<node_t>();
@@ -196,18 +396,15 @@ py::object invoke_cpp_constraint(py::object G, py::object nodes, py::object weig
             py::gil_scoped_release release;
             #pragma omp parallel
             {
-                rec_type sum_nmw_rec_private, local_constraint_rec_private;
                 #pragma omp for schedule(static)
                 for (int i = 0; i < nodes_list_len; i++) {
-                    std::pair<node_t, weight_t> constraint_pair =
-                        directed_compute_constraint_of_v(G_, node_ids[i], weight_key,
-                                                        local_constraint_rec_private, sum_nmw_rec_private);
-                    constraint_results[i] = constraint_pair.second;
+                    constraint_results[i] = directed_compute_constraint_of_v(G_, node_ids[i], weight_key, degree);
                 }
             }
         }
     } else {
         Graph& G_ = G.cast<Graph&>();
+        auto degree = build_degree(G_, weight_key);
         for (int i = 0; i < nodes_list_len; i++) {
             py::object v = nodes_list[i];
             node_ids[i] = G_.node_to_id[v].cast<node_t>();
@@ -217,13 +414,9 @@ py::object invoke_cpp_constraint(py::object G, py::object nodes, py::object weig
             py::gil_scoped_release release;
             #pragma omp parallel
             {
-                rec_type sum_nmw_rec_private, local_constraint_rec_private;
                 #pragma omp for schedule(static)
                 for (int i = 0; i < nodes_list_len; i++) {
-                    std::pair<node_t, weight_t> constraint_pair =
-                        compute_constraint_of_v(G_, node_ids[i], weight_key,
-                                                local_constraint_rec_private, sum_nmw_rec_private);
-                    constraint_results[i] = constraint_pair.second;
+                    constraint_results[i] = compute_constraint_of_v(G_, node_ids[i], weight_key, degree);
                 }
             }
         }
