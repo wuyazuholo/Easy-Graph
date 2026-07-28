@@ -16,7 +16,7 @@ ___________________________________________________________________________
 [python-url]: https://pypi.org/project/Python-EasyGraph/
 [license-image]: https://img.shields.io/pypi/l/Python-EasyGraph?label=License
 [license-url]: https://github.com/easy-graph/Easy-Graph/blob/master/LICENSE
-[downloads-image]: https://static.pepy.tech/personalized-badge/python-easygraph?period=total&units=international_system&left_color=brightgreen&right_color=yellowgreen&left_text=Downloads
+[downloads-image]: https://img.shields.io/pepy/dt/python-easygraph?label=Downloads&labelColor=brightgreen&color=yellowgreen
 [downloads-url]: https://pypi.org/project/Python-EasyGraph/
 
 - **Documentation:** https://easy-graph.github.io/
@@ -63,6 +63,8 @@ It bridges the gap between EasyGraph and higher-order relationships. EasyHypergr
 - [11-04-2023] [EasyGraph：多功能、跨平台、高效率的跨学科网络分析库 (in Chinese)](https://swarma.org/?p=46252)
 
 ## 🚀 Releases & Milestones
+- [06-07-2026] EasyGraph **v1.6.2** released (Community functions upgraded)
+- [05-07-2026] EasyGraph **v1.6.1** released (Add OpenMP-powered path-based functions)
 - [02-01-2026] EasyGraph **v1.6** released (OpenMP-powered functions for large network analysis)
 - **[01-16-2026] 🎉 1M Downloads! Thanks to our amazing community!**
 - [01-01-2026] EasyGraph **v1.5.3** released ([The Hypergraph Interchange Format (HIF) standard](https://github.com/HIF-org/HIF-standard))
