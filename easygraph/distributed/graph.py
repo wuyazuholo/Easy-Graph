@@ -67,12 +67,13 @@ class DistributedDiGraph(DistributedGraph):
         return True
 
 
-def read_edgelist(path, *, context, directed=False):
+def read_edgelist(path, *, context, directed=False, partition_file=None):
     if not isinstance(context, Context):
         raise TypeError("context must be an easygraph.distributed.Context")
     context._ensure_open()
     graph = context._backend.read_edgelist(
-        os.fsdecode(os.fspath(path)), context._comm, bool(directed)
+        os.fsdecode(os.fspath(path)), context._comm, bool(directed),
+        "" if partition_file is None else os.fsdecode(os.fspath(partition_file))
     )
     graph_type = DistributedDiGraph if directed else DistributedGraph
     return graph_type(graph, context)

@@ -21,9 +21,19 @@ VertexId parse_id(const std::string& token) {
 }
 
 std::shared_ptr<DistributedGraph> read_edgelist(
-    const std::string& path, std::shared_ptr<Communicator> comm, bool directed) {
+    const std::string& path, std::shared_ptr<Communicator> comm, bool directed,
+    const std::string& partition_file) {
     comm->agree(path);
     comm->agree(directed ? "directed" : "undirected");
+    comm->agree(partition_file);
+    std::shared_ptr<const Partitioner> partitioner;
+    std::string partition_error;
+    try {
+        partitioner = std::make_shared<Partitioner>(comm->size(), partition_file);
+    } catch (const std::exception& exc) {
+        partition_error = exc.what();
+    }
+    comm->check_error(partition_error);
     std::ifstream stream(path, std::ios::binary);
     comm->check_error(stream ? "" : "Cannot open edge list: " + path);
     stream.seekg(0, std::ios::end);
@@ -46,7 +56,6 @@ std::shared_ptr<DistributedGraph> read_edgelist(
             std::getline(stream, partial);
         }
     }
-    Partitioner partitioner(size);
     std::vector<std::vector<VertexId>> vertex_buckets(size);
     std::vector<std::vector<EdgeRecord>> edge_buckets(size);
     std::string error;
@@ -63,7 +72,7 @@ std::shared_ptr<DistributedGraph> read_edgelist(
         try {
             if (tokens.size() > 3) throw std::invalid_argument("Expected u, u v, or u v weight");
             const auto u = parse_id(tokens[0]);
-            vertex_buckets[partitioner.owner(u)].push_back(u);
+            vertex_buckets[partitioner->owner(u)].push_back(u);
             if (tokens.size() == 1) continue;
             const auto v = parse_id(tokens[1]);
             double weight = 1.0;
@@ -74,11 +83,11 @@ std::shared_ptr<DistributedGraph> read_edgelist(
                     throw std::invalid_argument("Weights must be finite and nonnegative");
                 }
             }
-            vertex_buckets[partitioner.owner(v)].push_back(v);
+            vertex_buckets[partitioner->owner(v)].push_back(v);
             const auto order = static_cast<Offset>(position);
-            edge_buckets[partitioner.owner(u)].push_back({u, v, weight, order});
+            edge_buckets[partitioner->owner(u)].push_back({u, v, weight, order});
             if (!directed && u != v) {
-                edge_buckets[partitioner.owner(v)].push_back({v, u, weight, order});
+                edge_buckets[partitioner->owner(v)].push_back({v, u, weight, order});
             }
         } catch (const std::exception& exc) {
             error = "Invalid record at byte " + std::to_string(static_cast<Offset>(position)) +
@@ -95,6 +104,6 @@ std::shared_ptr<DistributedGraph> read_edgelist(
     }
     auto vertices = comm->exchange(vertex_buckets);
     auto edges = comm->exchange(edge_buckets);
-    return std::make_shared<DistributedGraph>(comm, directed, std::move(vertices), std::move(edges));
+    return std::make_shared<DistributedGraph>(comm, directed, std::move(vertices), std::move(edges), partitioner);
 }
 }

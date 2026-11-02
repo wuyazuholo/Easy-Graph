@@ -2,7 +2,7 @@
 
 def resources(name, token, *, image, namespace, workers, slots, memory,
               pvc, idle_timeout, node_selector, threads=1, worker_nodes=None,
-              launcher_node=None):
+              launcher_node=None, launcher_tolerations=None):
     import copy
 
     command = ["mpirun", "--hostfile", "/etc/mpi/hostfile", "-np", str(workers * slots),
@@ -43,6 +43,8 @@ def resources(name, token, *, image, namespace, workers, slots, memory,
     launcher = copy.deepcopy(pod)
     if launcher_node is not None:
         launcher["nodeSelector"] = {"kubernetes.io/hostname": launcher_node}
+    if launcher_tolerations:
+        launcher["tolerations"] = copy.deepcopy(launcher_tolerations)
     c = launcher["containers"][0]
     c["command"] = command
     c.pop("readinessProbe")

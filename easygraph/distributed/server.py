@@ -11,7 +11,7 @@ import uuid
 
 from .context import Context
 from .graph import read_edgelist
-from .pagerank import pagerank
+from .functions.centrality.pagerank import pagerank
 
 MAX_REQUEST = 1024 * 1024
 
@@ -70,7 +70,8 @@ class Runtime:
         try:
             if op == "load":
                 graph = read_edgelist(command["path"], context=self.ctx,
-                                      directed=command["directed"])
+                                      directed=command["directed"],
+                                      partition_file=command["partition_file"])
             elif op == "pagerank":
                 graph = self.graphs[command["graph_id"]]["graph"]
                 result = pagerank(graph, alpha=command["alpha"], weight=command["weight"],
@@ -139,13 +140,18 @@ def validate(body):
                 "gather": ("result_id", "max_vertices"), "write": ("result_id", "path")}
     if op not in required:
         raise ValueError("Unsupported operation")
-    if set(body) != {"op", "request_id", *required[op]}:
+    expected = {"op", "request_id", *required[op]}
+    allowed = expected | ({"partition_file"} if op == "load" else set())
+    if not expected <= set(body) or not set(body) <= allowed:
         raise ValueError("Missing or unexpected request fields")
     for key in ("graph_id", "result_id"):
         if key in body and (not isinstance(body[key], str) or len(body[key]) != 32):
             raise ValueError("Invalid object handle")
     if op == "load" and type(body["directed"]) is not bool:
         raise ValueError("directed must be boolean")
+    if op == "load" and body.get("partition_file") is not None and (
+            not isinstance(body["partition_file"], str) or not body["partition_file"]):
+        raise ValueError("partition_file must be a nonempty path or null")
     for key in ("max_iter", "max_vertices"):
         if key in body and (type(body[key]) is not int or body[key] < 1):
             raise ValueError(key + " must be a positive integer")
@@ -159,6 +165,8 @@ def validate(body):
         if body["weight"] not in (None, "weight"):
             raise ValueError("Only weight=None or 'weight' is supported")
     command = dict(body)
+    if op == "load":
+        command.setdefault("partition_file", None)
     if op in ("load", "pagerank"):
         command["id"] = uuid.uuid4().hex
     return command
@@ -199,6 +207,8 @@ def serve(ctx, args, token):
                     command = validate(body)
                     if command["op"] in ("load", "write"):
                         command["path"] = runtime.path(command["path"])
+                    if command["op"] == "load" and command["partition_file"] is not None:
+                        command["partition_file"] = runtime.path(command["partition_file"])
                     server.last_activity = time.monotonic()
                     ctx._comm.broadcast_string(json.dumps(command, allow_nan=False), 0)
                     value = runtime.execute(command)

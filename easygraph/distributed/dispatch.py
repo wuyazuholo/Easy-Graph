@@ -2,7 +2,7 @@
 
 def dispatch(cpp_method_name, *args, **kwargs):
     if cpp_method_name == "cpp_pagerank":
-        from .pagerank import pagerank
+        from .functions.centrality.pagerank import pagerank
 
         return pagerank(*args, **kwargs)
     raise NotImplementedError(

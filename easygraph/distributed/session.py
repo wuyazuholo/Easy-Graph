@@ -15,7 +15,7 @@ import time
 from urllib.parse import urlsplit
 import uuid
 
-DEFAULT_IMAGE = "docker.io/library/easygraph-distributed:session-openmp-20261020"
+DEFAULT_IMAGE = "ghcr.io/easy-graph/easygraph-distributed:1.6.3"
 
 
 class SessionError(RuntimeError):
@@ -32,9 +32,9 @@ class Session:
 
     def __init__(self, *, cluster_type="k8s", num_workers=4, processes_per_worker=1,
                  threads_per_worker=1,
-                 namespace="benchmark", image=DEFAULT_IMAGE, pvc="benchmark-data-rwx",
+                 namespace="default", image=DEFAULT_IMAGE, pvc="easygraph-data",
                  worker_memory="2Gi", node_selector=None, worker_nodes=None,
-                 launcher_node=None, endpoint=None, token=None,
+                 launcher_node=None, launcher_tolerations=None, endpoint=None, token=None,
                  startup_timeout=180, request_timeout=300, idle_timeout=900,
                  heartbeat_interval=30, mpi_command="mpirun", python_executable=None,
                  data_root=None, kubectl="kubectl", kubeconfig=None):
@@ -53,6 +53,9 @@ class Session:
             worker_nodes = list(worker_nodes)
         if launcher_node is not None and (not isinstance(launcher_node, str) or not launcher_node.strip()):
             raise ValueError("launcher_node must be a nonempty node name")
+        if launcher_tolerations is not None and (not isinstance(launcher_tolerations, list) or
+                any(not isinstance(item, dict) for item in launcher_tolerations)):
+            raise ValueError("launcher_tolerations must be a list of Kubernetes tolerations")
         if cluster_type != "k8s" and (worker_nodes is not None or launcher_node is not None):
             raise ValueError("worker_nodes and launcher_node require cluster_type='k8s'")
         if min(startup_timeout, request_timeout, idle_timeout) <= 0 or heartbeat_interval < 0:
@@ -101,9 +104,9 @@ class Session:
                 secret, job = resources(self.name, self._token, image=image, namespace=namespace,
                     workers=num_workers, slots=processes_per_worker, threads=threads_per_worker,
                     memory=worker_memory, pvc=pvc, worker_nodes=worker_nodes,
-                    launcher_node=launcher_node,
+                    launcher_node=launcher_node, launcher_tolerations=launcher_tolerations,
                     idle_timeout=idle_timeout, node_selector=node_selector if node_selector is not None
-                    else {"benchmark-node": "true"})
+                    else {})
                 manifest = json.dumps({"apiVersion": "v1", "kind": "List", "items": [secret, job]})
                 self._kube("apply", "--dry-run=server", "-f", "-", input=manifest,
                            timeout=startup_timeout)
@@ -250,8 +253,11 @@ class Session:
     def info(self):
         return self._request("info")
 
-    def read_edgelist(self, path, *, directed=False):
-        value = self._request("load", path=os.fspath(path), directed=directed)
+    def read_edgelist(self, path, *, directed=False, partition_file=None):
+        fields = {"path": os.fspath(path), "directed": directed}
+        if partition_file is not None:
+            fields["partition_file"] = os.fspath(partition_file)
+        value = self._request("load", **fields)
         return RemoteGraph(self, value)
 
     def graph(self, graph_id):

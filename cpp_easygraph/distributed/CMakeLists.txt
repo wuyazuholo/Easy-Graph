@@ -14,8 +14,7 @@ pybind11_add_module(cpp_easygraph_distributed
     distributed_graph.cpp
     partitioner.cpp
     loader.cpp
-    worker.cpp
-    algorithms/pagerank.cpp
+    functions/centrality/pagerank.cpp
 )
 target_compile_features(cpp_easygraph_distributed PRIVATE cxx_std_11)
 target_link_libraries(cpp_easygraph_distributed PRIVATE MPI::MPI_CXX easygraph_openmp)

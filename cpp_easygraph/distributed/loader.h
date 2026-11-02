@@ -5,5 +5,6 @@
 
 namespace egdist {
 std::shared_ptr<DistributedGraph> read_edgelist(
-    const std::string& path, std::shared_ptr<Communicator> comm, bool directed);
+    const std::string& path, std::shared_ptr<Communicator> comm, bool directed,
+    const std::string& partition_file = "");
 }

@@ -1,7 +1,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
-#include "algorithms/pagerank.h"
+#include "functions/centrality/pagerank.h"
 #include "communicator.h"
 #include "distributed_graph.h"
 #include "loader.h"
@@ -37,7 +37,8 @@ PYBIND11_MODULE(cpp_easygraph_distributed, m) {
         .def_readonly("global_num_vertices", &DistributedGraph::global_num_vertices)
         .def_readonly("global_num_edges", &DistributedGraph::global_num_edges)
         .def_property_readonly("local_num_arcs", [](const DistributedGraph& g) { return g.targets.size(); });
-    m.def("read_edgelist", &read_edgelist, py::arg("path"), py::arg("comm"), py::arg("directed"));
+    m.def("read_edgelist", &read_edgelist, py::arg("path"), py::arg("comm"),
+          py::arg("directed"), py::arg("partition_file") = "");
     m.def("pagerank", [](const DistributedGraph& graph, double alpha, int max_iter,
                           double tol, bool weighted) {
         auto result = pagerank(graph, alpha, max_iter, tol, weighted);
